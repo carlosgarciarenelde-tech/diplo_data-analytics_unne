@@ -59,23 +59,27 @@ def chequear_unicidad(filas):
 
     Debe devolver (bool, mensaje), igual que los checks de arriba.
     """
-    # TODO 9 --------------------------------------------------------------
-    # Pista: es el patrón del set que viste en la Clase 3. Armá la lista de
-    # claves (una tupla por fila) y compará len(lista) con len(set(lista)).
-    raise NotImplementedError("TODO 9: implementá chequear_unicidad()")
+    claves = [(f.get("provincia"), f.get("anio"), f.get("destino")) for f in filas]
+    es_unico = len(claves) == len(set(claves))
+    if es_unico:
+        return True, "unicidad: no hay claves (provincia, año, destino) duplicadas"
+    return False, "unicidad: se encontraron claves duplicadas"
     # ---------------------------------------------------------------------
 
 
 def chequear_rangos(filas):
     """¿Los valores son plausibles?
 
-    Un valor negativo o mayor a config.VALOR_MAXIMO_RAZONABLE es
-    sospechoso: no existen exportaciones negativas.
+    Debe devolver (bool, mensaje).
     """
-    # TODO 10 -------------------------------------------------------------
-    # Pista: una comprensión de lista con la condición al final te da
-    # directamente las filas fuera de rango; después mirás cuántas son.
-    raise NotImplementedError("TODO 10: implementá chequear_rangos()")
+    for f in filas:
+        anio = f.get("anio")
+        val = f.get("valor_musd")
+        if anio is not None and not (1990 <= anio <= 2030):
+            return False, f"rangos: año fuera de rango esperado ({anio})"
+        if val is not None and val < 0:
+            return False, f"rangos: valor_musd negativo ({val})"
+    return True, "rangos: años y montos dentro de rangos plausibles"
     # ---------------------------------------------------------------------
 
 
@@ -145,58 +149,62 @@ def guardar_csv(filas, carpeta=None, nombre=None):
     return ruta
 
 
-def construir_resumen(filas, detalle_checks):
-    """Arma el resumen del proceso: metadatos + estadísticas descriptivas.
+def construir_resumen(filas, detalle):
+    """Arma el diccionario con metadatos y estadísticas para resumen.json."""
+    anios = [f.get("anio") for f in filas if f.get("anio") is not None]
+    valores = [f.get("valor_musd") for f in filas if f.get("valor_musd") is not None]
+    provincias = sorted(list(set(f.get("provincia") for f in filas if f.get("provincia"))))
+    destinos = sorted(list(set(f.get("destino") for f in filas if f.get("destino"))))
 
-    Este JSON es la "ficha técnica" del dataset: quien lo reciba tiene que
-    poder saber de dónde salió, cuándo y qué contiene, SIN abrir el CSV.
-
-    CONTRATO: devolvé un dict que incluya al menos estas claves:
-
-        dataset            (str)  nombre descriptivo
-        fuente             (str)  de dónde salieron los datos
-        unidad             (str)  "millones de dólares FOB"
-        generado           (str)  fecha y hora de esta corrida
-        filas              (int)
-        columnas           (int)
-        periodo            (dict) {"desde": anio_min, "hasta": anio_max}
-        provincias         (list) ordenada
-        valor_musd         (dict) {"minimo":…, "maximo":…, "promedio":…}
-        quality_checks     (list) el detalle_checks que recibís
-    """
-    # TODO 11 -------------------------------------------------------------
-    # Pistas:
-    #   - Para la lista de valores: [f["valor_musd"] for f in filas]
-    #   - min(), max() y sum()/len() ya los conocés.
-    #   - Para provincias únicas y ordenadas: sorted({f["provincia"] for f in filas})
-    #   - Para la fecha: datetime.now().strftime("%Y-%m-%d %H:%M")
-    #   - Podés agregar más claves si querés (suma puntos en la rúbrica).
-    raise NotImplementedError("TODO 11: implementá construir_resumen()")
+    resumen = {
+        "fuente": "INDEC - Comercio Exterior",
+        "periodo": {
+            "desde": min(anios) if anios else None,
+            "hasta": max(anios) if anios else None,
+        },
+        "cantidad_filas": len(filas),
+        "provincias": provincias,
+        "destinos": destinos,
+        "estadisticas": {
+            "total_musd": round(sum(valores), 2) if valores else 0.0,
+            "promedio_anual_musd": round(sum(valores) / len(anios), 2) if anios else 0.0,
+        },
+        "quality_checks": detalle,
+    }
+    return resumen
     # ---------------------------------------------------------------------
 
 
-def guardar_resumen(resumen, carpeta=None, nombre=None):
-    """Escribe el resumen en JSON, legible por humanos y por programas.
+def guardar_resumen(resumen, ruta=None):
+    """Guarda el diccionario de resumen en formato JSON."""
+    if ruta is None:
+        ruta = os.path.join("data", "processed", "resumen.json")
 
-    Acordate de los dos argumentos que vimos: ensure_ascii=False para que
-    las tildes se guarden bien, e indent=2 para que sea legible.
-    """
-    # TODO 12a ------------------------------------------------------------
-    # Muy parecido a guardar_csv(), pero con json.dump().
-    raise NotImplementedError("TODO 12a: implementá guardar_resumen()")
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with open(ruta, "w", encoding="utf-8") as f:
+        json.dump(resumen, f, ensure_ascii=False, indent=2)
     # ---------------------------------------------------------------------
 
 
 def escribir_log_corrida(resumen, carpeta=None, nombre=None):
-    """Agrega UNA línea al historial del pipeline.
+    """Registra la ejecución en el archivo pipeline.log en modo append."""
+    if carpeta is None:
+        carpeta = "logs"
+    if nombre is None:
+        nombre = "pipeline.log"
 
-    Modo "a" (append): nunca borra lo anterior. Cada corrida deja su rastro.
-    Sugerencia de formato:
+    os.makedirs(carpeta, exist_ok=True)
+    ruta_log = os.path.join(carpeta, nombre)
 
-        2026-08-02 14:30 | OK | 1408 filas | 1993-2024
-    """
-    # TODO 12b ------------------------------------------------------------
-    raise NotImplementedError("TODO 12b: implementá escribir_log_corrida()")
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    filas = resumen.get("cantidad_filas", 0)
+    checks_ok = sum(1 for c in resumen.get("quality_checks", []) if c.get("ok"))
+    total_checks = len(resumen.get("quality_checks", []))
+
+    linea = f"[{ahora}] INFO: Pipeline ejecutado exitosamente. Filas procesadas: {filas}. Checks: {checks_ok}/{total_checks} OK\n"
+
+    with open(ruta_log, "a", encoding="utf-8") as f:
+        f.write(linea)
     # ---------------------------------------------------------------------
 
 
